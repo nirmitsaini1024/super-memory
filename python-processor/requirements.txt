@@ -1,0 +1,39 @@
+# Core FastAPI and server
+fastapi==0.117.1
+uvicorn==0.36.0
+pydantic==2.11.9
+pydantic-settings==2.10.1
+
+# Vector database and embeddings
+chromadb==1.1.0
+numpy==2.3.3
+
+# LangChain for AI operations
+langchain==0.3.27
+langchain-community==0.3.29
+langchain-core==0.3.76
+langchain-openai==0.3.33
+langchain-text-splitters==0.3.11
+
+# OpenAI integration
+openai==1.108.1
+tiktoken==0.11.0
+
+# HTTP client for external requests
+httpx==0.28.1
+requests==2.32.5
+
+# Environment and configuration
+python-dotenv==1.1.1
+
+# Text processing
+regex==2025.9.18
+tokenizers==0.22.1
+
+# Utilities
+click==8.3.0
+rich==14.1.0
+tqdm==4.67.1
+
+# Additional useful packages
+typing-extensions==4.15.0
