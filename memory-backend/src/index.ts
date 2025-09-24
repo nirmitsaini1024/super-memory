@@ -1,6 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import notesRouter from './routes/notes.js';
+import { clerkMiddleware, getAuth } from '@clerk/express';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
 const port = 3000;
@@ -12,50 +16,186 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Clerk middleware for JWT verification
+app.use(clerkMiddleware());
+
 // Routes
 app.get('/', (req, res) => {
-  res.send('Hello World');
+  res.send('SuperMemory Backend - Python service handles all data operations');
+});
+
+// Public route - no authentication required
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// Protected route - requires authentication
+app.get('/user', (req, res) => {
+  const auth = getAuth(req);
+  
+  if (!auth.isAuthenticated) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Please sign in to access this resource' 
+    });
+  }
+  
+  res.json({
+    userId: auth.userId,
+    sessionId: auth.sessionId,
+    isAuthenticated: auth.isAuthenticated
+  });
+});
+
+// Proxy route to Python service with user authentication
+app.post('/api/notes', async (req, res) => {
+  const auth = getAuth(req);
+  
+  if (!auth.isAuthenticated) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Please sign in to create notes' 
+    });
+  }
+  
+  try {
+    // Forward request to Python service with user_id
+    const pythonResponse = await fetch('http://localhost:8000/notes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...req.body,
+        user_id: auth.userId
+      })
+    });
+    
+    const data = await pythonResponse.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error forwarding to Python service:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Proxy route for getting notes
+app.get('/api/notes', async (req, res) => {
+  const auth = getAuth(req);
+  
+  if (!auth.isAuthenticated) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Please sign in to view notes' 
+    });
+  }
+  
+  try {
+    const pythonResponse = await fetch(`http://localhost:8000/notes?user_id=${encodeURIComponent(auth.userId)}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    
+    const data = await pythonResponse.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error forwarding to Python service:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Proxy route for querying notes
+app.post('/api/query', async (req, res) => {
+  const auth = getAuth(req);
+  
+  if (!auth.isAuthenticated) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Please sign in to query notes' 
+    });
+  }
+  
+  try {
+    // Forward request to Python service with user_id
+    const pythonResponse = await fetch('http://localhost:8000/query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...req.body,
+        user_id: auth.userId
+      })
+    });
+    
+    const data = await pythonResponse.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error forwarding to Python service:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Proxy route for updating notes
+app.put('/api/notes/:id', async (req, res) => {
+  const auth = getAuth(req);
+  
+  if (!auth.isAuthenticated) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Please sign in to update notes' 
+    });
+  }
+  
+  try {
+    const { id } = req.params;
+    const pythonResponse = await fetch(`http://localhost:8000/notes/${id}?user_id=${encodeURIComponent(auth.userId)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(req.body)
+    });
+    
+    const data = await pythonResponse.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error forwarding to Python service:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Proxy route for deleting notes
+app.delete('/api/notes/:id', async (req, res) => {
+  const auth = getAuth(req);
+  
+  if (!auth.isAuthenticated) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Please sign in to delete notes' 
+    });
+  }
+  
+  try {
+    const { id } = req.params;
+    const pythonResponse = await fetch(`http://localhost:8000/notes/${id}?user_id=${encodeURIComponent(auth.userId)}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    
+    const data = await pythonResponse.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error forwarding to Python service:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 
-
-
-// Use the notes router
-app.use('/notes', notesRouter);
-
-
-
-
-
-
-
-// Placeholder routes for future implementation
-app.post('/chats/:id', (req, res) => {
-  res.send('Post request received');
-});
-
-app.get('/chats/:id', (req, res) => {
-  res.send('Get request received');
-});
-
-app.get('/chats', (req, res) => {
-  res.send('Get request received');
-});
-
-app.get('/query', (req, res) => {
-  res.send('Get request received');
-});
-
-
-// POST /notes → add a note
-
-// GET /notes → fetch all notes
-
-// POST /chats → add a chat message
-
-// GET /chats → fetch all chats
-
-// POST /query → placeholder for retrieval + AI
 
 
 // Add this at the very end, before app.listen
