@@ -204,31 +204,79 @@ def get_note_by_id(note_id: str, user_id: str):
     }
 
 @app.put("/notes/{note_id}")
-def update_note(note_id: str, user_id: str, note: Note):
-    result = collection.get(ids=[note_id], where={"user_id": user_id})
+def update_note(note_id: str, user_id: str, update_data: dict):
+    # Find all chunks for this note
+    result = collection.get(where={
+        "$and": [
+            {"note_id": note_id},
+            {"user_id": user_id}
+        ]
+    })
     if not result["ids"]:
         return {"error": "Note not found"}
     
-    collection.update(
-        ids=[note_id],
-        documents=[note.text],
-        metadatas=[{
-            "user_id": note.user_id,
-            "tags": note.tags,
-            "source": note.source,
-            "timestamp": note.timestamp.isoformat()
-        }]
+    # Get the first chunk's metadata to preserve original data
+    existing_metadata = result["metadatas"][0]
+    
+    # Get updated data
+    updated_text = update_data.get("text", "")
+    updated_tags = update_data.get("tags", [])
+    
+    # Convert tags list to comma-separated string if it's a list
+    if isinstance(updated_tags, list):
+        tags_string = ",".join(updated_tags)
+    else:
+        tags_string = updated_tags
+    
+    # Delete all existing chunks for this note
+    collection.delete(ids=result["ids"])
+    
+    # Re-chunk the updated text
+    chunks = text_splitter.split_text(updated_text)
+    
+    # Create new chunks with updated content
+    new_documents = []
+    new_metadatas = []
+    new_ids = []
+    
+    for i, chunk in enumerate(chunks):
+        chunk_id = f"{note_id}_chunk_{i}"
+        new_documents.append(chunk)
+        new_metadatas.append({
+            "user_id": existing_metadata["user_id"],
+            "tags": tags_string,
+            "source": existing_metadata["source"],
+            "timestamp": existing_metadata["timestamp"],
+            "note_id": note_id,
+            "chunk_index": i,
+            "total_chunks": len(chunks)
+        })
+        new_ids.append(chunk_id)
+    
+    # Add the new chunks
+    collection.add(
+        documents=new_documents,
+        metadatas=new_metadatas,
+        ids=new_ids
     )
-    return {"message": "Note updated successfully", "note": note}
+    
+    return {"message": "Note updated successfully", "chunks_updated": len(chunks)}
 
 @app.delete("/notes/{note_id}")
 def delete_note(note_id: str, user_id: str):
-    result = collection.get(ids=[note_id], where={"user_id": user_id})
+    # Find all chunks for this note
+    result = collection.get(where={
+        "$and": [
+            {"note_id": note_id},
+            {"user_id": user_id}
+        ]
+    })
     if not result["ids"]:
         return {"error": "Note not found"}
     
-    collection.delete(ids=[note_id])
-    return {"message": "Note deleted successfully"}
+    # Delete all chunks for this note
+    collection.delete(ids=result["ids"])
+    return {"message": "Note deleted successfully", "chunks_deleted": len(result["ids"])}
 
 @app.post("/query")
 def query_notes(query: QueryRequest):
