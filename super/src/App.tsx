@@ -6,7 +6,7 @@ import NotesPage from './pages/NotesPage'
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
       <Navigation />
       
       <Routes>

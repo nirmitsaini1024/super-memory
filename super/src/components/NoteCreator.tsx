@@ -57,12 +57,12 @@ export default function NoteCreator({ onNoteCreated }: NoteCreatorProps) {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Create New Note</h3>
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Create New Note</h3>
       
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="text" className="block text-sm font-medium text-gray-700 mb-2">
+          <label htmlFor="text" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Note Content
           </label>
           <textarea
@@ -70,7 +70,7 @@ export default function NoteCreator({ onNoteCreated }: NoteCreatorProps) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Enter your note content here..."
-            className="w-full px-3 py-2 text-black border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-3 py-2 text-gray-900 dark:text-white bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-500 dark:placeholder-gray-400"
             rows={4}
             required
             disabled={isLoading}
@@ -78,7 +78,7 @@ export default function NoteCreator({ onNoteCreated }: NoteCreatorProps) {
         </div>
         
         <div>
-          <label htmlFor="tags" className="block text-sm font-medium  text-gray-700 mb-2">
+          <label htmlFor="tags" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Tags (comma-separated)
           </label>
           <input
@@ -87,7 +87,7 @@ export default function NoteCreator({ onNoteCreated }: NoteCreatorProps) {
             value={tags}
             onChange={(e) => setTags(e.target.value)}
             placeholder="work, important, meeting"
-            className="w-full px-3 py-2 border border-gray-300 text-black rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-3 py-2 text-gray-900 dark:text-white bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-500 dark:placeholder-gray-400"
             disabled={isLoading}
           />
         </div>
@@ -103,7 +103,9 @@ export default function NoteCreator({ onNoteCreated }: NoteCreatorProps) {
       
       {message && (
         <div className={`mt-4 p-3 rounded-md ${
-          message.includes('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+          message.includes('Error') 
+            ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400' 
+            : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
         }`}>
           {message}
         </div>

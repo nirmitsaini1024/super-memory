@@ -124,6 +124,73 @@ def extract_date_from_question(question: str):
     
     return None
 
+def parse_time_query(question: str):
+    """Parse time-based queries like 'latest', 'recent', 'today', 'yesterday'"""
+    import re
+    from datetime import datetime, timedelta
+    
+    question_lower = question.lower()
+    
+    # Latest note queries
+    if any(word in question_lower for word in ['latest', 'most recent', 'newest']):
+        return {"type": "latest", "limit": 1}
+    
+    # Recent notes queries
+    if any(word in question_lower for word in ['recent', 'recently']):
+        return {"type": "recent", "days": 7}  # Last 7 days
+    
+    # Today's notes
+    if any(word in question_lower for word in ['today', "today's"]):
+        return {"type": "today"}
+    
+    # Yesterday's notes
+    if any(word in question_lower for word in ['yesterday', "yesterday's"]):
+        return {"type": "yesterday"}
+    
+    # Last week
+    if any(phrase in question_lower for phrase in ['last week', 'past week']):
+        return {"type": "recent", "days": 7}
+    
+    # Last month
+    if any(phrase in question_lower for phrase in ['last month', 'past month']):
+        return {"type": "recent", "days": 30}
+    
+    return None
+
+def parse_tag_query(question: str):
+    """Parse tag-based queries like 'tag:work', 'with tag important'"""
+    import re
+    
+    question_lower = question.lower()
+    
+    # Pattern 1: "tag:work" or "tag:important"
+    tag_pattern = r'tag:(\w+)'
+    match = re.search(tag_pattern, question_lower)
+    if match:
+        return {"type": "tag", "tag": match.group(1)}
+    
+    # Pattern 2: "with tag work" or "tagged with important"
+    with_tag_patterns = [
+        r'with tag (\w+)',
+        r'tagged with (\w+)',
+        r'notes with (\w+) tag',
+        r'(\w+) tagged notes'
+    ]
+    
+    for pattern in with_tag_patterns:
+        match = re.search(pattern, question_lower)
+        if match:
+            return {"type": "tag", "tag": match.group(1)}
+    
+    # Pattern 3: "my work notes" or "important notes"
+    # This is more complex and might need a predefined list of common tags
+    common_tags = ['work', 'important', 'personal', 'study', 'project', 'idea', 'todo', 'meeting', 'python', 'ai', 'machine learning', 'coding']
+    for tag in common_tags:
+        if f' {tag} ' in question_lower or f' {tag}s ' in question_lower or question_lower.endswith(f' {tag}'):
+            return {"type": "tag", "tag": tag}
+    
+    return None
+
 class Note(BaseModel):
     text: str
     tags: List[str] = []
@@ -281,21 +348,156 @@ def delete_note(note_id: str, user_id: str):
 @app.post("/query")
 def query_notes(query: QueryRequest):
     try:
-        # Extract date from question if present
+        from datetime import datetime, timedelta
+        
+        # Parse time and tag queries
+        time_filter = parse_time_query(query.question)
+        tag_filter = parse_tag_query(query.question)
         extracted_date = extract_date_from_question(query.question)
         
-        # Search for similar chunks (we'll filter by date after retrieval)
-        results = collection.query(
-            query_texts=[query.question],
-            where={"user_id": query.user_id},
-            n_results=query.top_k * 3  # Get more results to filter from
-        )
+        # Determine query strategy based on filters
+        if time_filter and time_filter["type"] == "latest":
+            # For latest queries, get all notes and sort by timestamp
+            results = collection.get(
+                where={"user_id": query.user_id},
+                limit=100  # Get more to sort from
+            )
+            
+            if not results["ids"]:
+                return {"answer": "No notes found.", "sources": []}
+            
+            # Sort by timestamp (newest first)
+            if results["metadatas"]:
+                # Create list of (index, timestamp) tuples
+                indexed_timestamps = []
+                for i, metadata in enumerate(results["metadatas"]):
+                    if metadata and "timestamp" in metadata:
+                        try:
+                            timestamp = datetime.fromisoformat(metadata["timestamp"].replace('Z', '+00:00'))
+                            indexed_timestamps.append((i, timestamp))
+                        except:
+                            continue
+                
+                if not indexed_timestamps:
+                    return {"answer": "No notes with valid timestamps found.", "sources": []}
+                
+                # Sort by timestamp (newest first)
+                indexed_timestamps.sort(key=lambda x: x[1], reverse=True)
+                
+                # Take only the latest note(s)
+                limit = time_filter.get("limit", 1)
+                latest_indices = [idx for idx, _ in indexed_timestamps[:limit]]
+                
+                # Filter results to only include latest notes
+                # Note: collection.get() returns flat lists, not nested lists like collection.query()
+                filtered_results = {
+                    "ids": [[results["ids"][i] for i in latest_indices]],
+                    "documents": [[results["documents"][i] for i in latest_indices]],
+                    "metadatas": [[results["metadatas"][i] for i in latest_indices]],
+                    "distances": [[]]  # No distances for get() queries
+                }
+                results = filtered_results
+            else:
+                return {"answer": "No notes with timestamps found.", "sources": []}
+        
+        elif time_filter and time_filter["type"] in ["today", "yesterday", "recent"]:
+            # For time-based queries, get all notes and filter by date
+            results = collection.get(
+                where={"user_id": query.user_id},
+                limit=1000  # Get more to filter from
+            )
+            
+            if not results["ids"]:
+                return {"answer": "No notes found.", "sources": []}
+            
+            # Calculate target date
+            today = datetime.now().date()
+            if time_filter["type"] == "today":
+                target_date = today
+            elif time_filter["type"] == "yesterday":
+                target_date = today - timedelta(days=1)
+            elif time_filter["type"] == "recent":
+                days = time_filter.get("days", 7)
+                target_date = today - timedelta(days=days)
+            
+            # Filter by date
+            filtered_results = {
+                "ids": [[]],
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]]
+            }
+            
+            for i, metadata in enumerate(results["metadatas"]):
+                if metadata and "timestamp" in metadata:
+                    try:
+                        note_date = datetime.fromisoformat(metadata["timestamp"].replace('Z', '+00:00')).date()
+                        if time_filter["type"] == "recent":
+                            if note_date >= target_date:
+                                filtered_results["ids"][0].append(results["ids"][i])
+                                filtered_results["documents"][0].append(results["documents"][i])
+                                filtered_results["metadatas"][0].append(metadata)
+                        else:
+                            if note_date == target_date:
+                                filtered_results["ids"][0].append(results["ids"][i])
+                                filtered_results["documents"][0].append(results["documents"][i])
+                                filtered_results["metadatas"][0].append(metadata)
+                    except:
+                        continue
+            
+            if not filtered_results["ids"][0]:
+                time_desc = time_filter["type"]
+                if time_filter["type"] == "recent":
+                    time_desc = f"last {time_filter.get('days', 7)} days"
+                return {"answer": f"No notes found for {time_desc}.", "sources": []}
+            
+            results = filtered_results
+        
+        elif tag_filter:
+            # For tag-based queries, get all notes and filter by tag
+            results = collection.get(
+                where={"user_id": query.user_id},
+                limit=1000  # Get more to filter from
+            )
+            
+            if not results["ids"]:
+                return {"answer": "No notes found.", "sources": []}
+            
+            # Filter by tag
+            filtered_results = {
+                "ids": [[]],
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]]
+            }
+            
+            target_tag = tag_filter["tag"].lower()
+            for i, metadata in enumerate(results["metadatas"]):
+                if metadata and "tags" in metadata:
+                    note_tags = metadata["tags"].lower()
+                    if target_tag in note_tags:
+                        filtered_results["ids"][0].append(results["ids"][i])
+                        filtered_results["documents"][0].append(results["documents"][i])
+                        filtered_results["metadatas"][0].append(metadata)
+            
+            if not filtered_results["ids"][0]:
+                return {"answer": f"No notes found with tag '{tag_filter['tag']}'.", "sources": []}
+            
+            results = filtered_results
+        
+        else:
+            # Regular semantic search
+            results = collection.query(
+                query_texts=[query.question],
+                where={"user_id": query.user_id},
+                n_results=query.top_k * 3  # Get more results to filter from
+            )
         
         if not results["ids"][0]:
             return {"answer": "No relevant information found in your notes.", "sources": []}
         
-        # Filter by date if specified
-        if extracted_date:
+        # Filter by specific date if specified (for date queries like "March 6, 2025")
+        if extracted_date and not time_filter:
             filtered_results = {
                 "ids": [[]],
                 "documents": [[]],
@@ -323,16 +525,30 @@ def query_notes(query: QueryRequest):
         context_chunks = []
         sources = []
         
-        for i, chunk_id in enumerate(results["ids"][0]):
-            chunk_text = results["documents"][0][i]
-            metadata = results["metadatas"][0][i]
+        # Handle different result structures (query vs get)
+        if results["ids"] and isinstance(results["ids"][0], list):
+            # This is from collection.query() - nested structure
+            ids_list = results["ids"][0]
+            documents_list = results["documents"][0]
+            metadatas_list = results["metadatas"][0]
+            distances_list = results["distances"][0] if "distances" in results and results["distances"][0] else []
+        else:
+            # This is from collection.get() - flat structure, but we wrapped it in nested lists
+            ids_list = results["ids"][0] if results["ids"] and isinstance(results["ids"][0], list) else results["ids"]
+            documents_list = results["documents"][0] if results["documents"] and isinstance(results["documents"][0], list) else results["documents"]
+            metadatas_list = results["metadatas"][0] if results["metadatas"] and isinstance(results["metadatas"][0], list) else results["metadatas"]
+            distances_list = results["distances"][0] if "distances" in results and results["distances"][0] else []
+        
+        for i, chunk_id in enumerate(ids_list):
+            chunk_text = documents_list[i]
+            metadata = metadatas_list[i]
             
             context_chunks.append(chunk_text)
             sources.append({
                 "chunk_id": chunk_id,
                 "note_id": metadata.get("note_id"),
                 "text_snippet": chunk_text[:200] + "..." if len(chunk_text) > 200 else chunk_text,
-                "relevance_score": results["distances"][0][i] if "distances" in results else 0
+                "relevance_score": distances_list[i] if i < len(distances_list) else 0
             })
         
         # Create prompt for AI with note IDs
@@ -342,14 +558,29 @@ def query_notes(query: QueryRequest):
             context_with_ids.append(f"[Note ID: {note_id}]\n{chunk}")
         
         context = "\n\n".join(context_with_ids)
-        # Check if this is a date-specific query
-        date_info = ""
-        if extracted_date:
-            date_info = f"\nNote: This query is filtered for notes from {extracted_date}."
+        
+        # Add filter information to the prompt
+        filter_info = ""
+        if time_filter:
+            if time_filter["type"] == "latest":
+                filter_info = f"\nNote: This query is filtered to show your latest note(s)."
+            elif time_filter["type"] == "today":
+                filter_info = f"\nNote: This query is filtered for notes from today."
+            elif time_filter["type"] == "yesterday":
+                filter_info = f"\nNote: This query is filtered for notes from yesterday."
+            elif time_filter["type"] == "recent":
+                days = time_filter.get("days", 7)
+                filter_info = f"\nNote: This query is filtered for notes from the last {days} days."
+        
+        if tag_filter:
+            filter_info += f"\nNote: This query is filtered for notes with tag '{tag_filter['tag']}'."
+        
+        if extracted_date and not time_filter:
+            filter_info += f"\nNote: This query is filtered for notes from {extracted_date}."
         
         prompt = f"""
         You are a personal assistant that answers questions using ONLY the user's personal notes provided below.
-        Question: {query.question}{date_info}
+        Question: {query.question}{filter_info}
         
         Your personal notes (with Note IDs for reference):
         {context}
@@ -357,12 +588,16 @@ def query_notes(query: QueryRequest):
         Instructions:
         1. Answer the question using ONLY the information from your notes above
         2. If the notes don't contain enough information to answer the question, say "I don't have enough information in my notes to answer this question"
-        3. Always reference the specific Note ID when citing information (e.g., "According to Note ID: abc123...")
-        4. Be specific about which information comes from the notes. Do not use general knowledge.
-        5. Do not present yourself as an AI assistant.
-        6. If a question requires information outside of the provided notes, respond only with: "I don't have enough information in my notes to answer this question."
-        7. Always include the Note ID when referencing specific information.
-        8. If this is a date-specific query and no notes are found for that date, mention that no notes were found for the specified date.
+        3. Be specific about which information comes from the notes. Do not use general knowledge.
+        4. Do not present yourself as an AI assistant.
+        5. If a question requires information outside of the provided notes, respond only with: "I don't have enough information in my notes to answer this question."
+        6. Do NOT mention Note IDs or technical references in your response. Keep the answer natural and user-friendly.
+        7. If this is a time-filtered query (latest, today, yesterday, recent), acknowledge that the results are filtered by time.
+        8. If this is a tag-filtered query, acknowledge that the results are filtered by the specified tag.
+        9. If this is a date-specific query and no notes are found for that date, mention that no notes were found for the specified date.
+        10. Use the Note IDs only internally to track which notes contain the information, but do not display them to the user.
+        11. When multiple notes are found, format them clearly (e.g., "Here are your notes with tag 'ss':" followed by a list or clear separation between notes).
+        12. If showing multiple notes, make it easy to distinguish between different notes.
         
         
         Answer:

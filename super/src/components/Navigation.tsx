@@ -11,13 +11,13 @@ export default function Navigation() {
   }
 
   return (
-    <header className="bg-white shadow-sm border-b">
+    <header className="bg-white dark:bg-gray-900 shadow-sm border-b border-gray-200 dark:border-gray-700">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo and Navigation */}
           <div className="flex items-center space-x-8">
             <Link to="/" className="flex items-center">
-              <h1 className="text-xl font-semibold text-gray-900">
+              <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
                 SuperMemory
               </h1>
             </Link>
@@ -28,8 +28,8 @@ export default function Navigation() {
                   to="/chat"
                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                     isActive('/chat')
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+                      : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
                   Chat
@@ -38,8 +38,8 @@ export default function Navigation() {
                   to="/notes"
                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                     isActive('/notes')
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+                      : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
                   Notes
@@ -48,9 +48,9 @@ export default function Navigation() {
             </SignedIn>
           </div>
           
-          {/* Authentication */}
-          <div className="flex items-center space-x-4">
-            <SignedOut>
+          {/* Authentication and Theme Toggle */}
+                   <div className="flex items-center space-x-4">
+                     <SignedOut>
               <SignInButton mode="modal">
                 <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
                   Sign In
