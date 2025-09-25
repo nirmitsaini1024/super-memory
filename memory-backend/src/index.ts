@@ -60,7 +60,7 @@ app.post('/api/notes', async (req, res) => {
   
   try {
     // Forward request to Python service with user_id
-    const pythonResponse = await fetch('http://localhost:8000/notes', {
+    const pythonResponse = await fetch('http://localhost:8000/api/notes', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -91,7 +91,7 @@ app.get('/api/notes', async (req, res) => {
   }
   
   try {
-    const pythonResponse = await fetch(`http://localhost:8000/notes?user_id=${encodeURIComponent(auth.userId)}`, {
+    const pythonResponse = await fetch(`http://localhost:8000/api/notes?user_id=${encodeURIComponent(auth.userId)}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -119,7 +119,39 @@ app.post('/api/query', async (req, res) => {
   
   try {
     // Forward request to Python service with user_id
-    const pythonResponse = await fetch('http://localhost:8000/query', {
+    const pythonResponse = await fetch('http://localhost:8000/api/query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...req.body,
+        user_id: auth.userId
+      })
+    });
+    
+    const data = await pythonResponse.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error forwarding to Python service:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Proxy route for querying notes with retriever
+app.post('/api/query-retriever', async (req, res) => {
+  const auth = getAuth(req);
+  
+  if (!auth.isAuthenticated) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Please sign in to query notes' 
+    });
+  }
+  
+  try {
+    // Forward request to Python service with user_id
+    const pythonResponse = await fetch('http://localhost:8000/api/query-retriever', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -151,7 +183,7 @@ app.put('/api/notes/:id', async (req, res) => {
   
   try {
     const { id } = req.params;
-    const pythonResponse = await fetch(`http://localhost:8000/notes/${id}?user_id=${encodeURIComponent(auth.userId)}`, {
+    const pythonResponse = await fetch(`http://localhost:8000/api/notes/${id}?user_id=${encodeURIComponent(auth.userId)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -180,7 +212,7 @@ app.delete('/api/notes/:id', async (req, res) => {
   
   try {
     const { id } = req.params;
-    const pythonResponse = await fetch(`http://localhost:8000/notes/${id}?user_id=${encodeURIComponent(auth.userId)}`, {
+    const pythonResponse = await fetch(`http://localhost:8000/api/notes/${id}?user_id=${encodeURIComponent(auth.userId)}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',

@@ -50,7 +50,7 @@ export default function ChatArea() {
       const token = await getToken()
       
       // Call the backend API
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/query`, {
+      const response = await fetch(`/api/query-retriever`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -58,7 +58,7 @@ export default function ChatArea() {
         },
         body: JSON.stringify({
           question: message,
-          top_k: 5
+          top_k: 1
         })
       })
 
@@ -124,7 +124,9 @@ export default function ChatArea() {
                   {/* Show clickable note references for AI messages */}
                   {message.type === 'ai' && message.sources && message.sources.length > 0 && (
                     <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-600">
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Referenced notes:</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                        {message.sources.length === 1 ? 'Referenced note:' : `Referenced notes (${message.sources.length}):`}
+                      </p>
                       <div className="flex flex-wrap gap-2">
                         {message.sources.map((source, index) => (
                           <button

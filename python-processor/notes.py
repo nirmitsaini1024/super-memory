@@ -1,16 +1,21 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 import chromadb
 from chromadb.config import Settings
 import os
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Dict
 import uuid
 from datetime import datetime
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
+from langchain_chroma import Chroma
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnablePassthrough
 from dotenv import load_dotenv
 import re
 
@@ -18,6 +23,9 @@ import re
 load_dotenv()
 
 app = FastAPI(title="Memory Engine")
+
+# Create API router with /api prefix
+api_router = APIRouter(prefix="/api")
 
 origins = [
     "http://localhost:3000",
@@ -58,6 +66,8 @@ text_splitter = RecursiveCharacterTextSplitter(
 # Initialize OpenAI embeddings and LLM (lazy initialization)
 embeddings = None
 llm = None
+vector_store = None
+retriever = None
 
 def get_embeddings():
     global embeddings
@@ -78,6 +88,46 @@ def get_llm():
             openai_api_base="https://openrouter.ai/api/v1"
         )
     return llm
+
+def get_retriever(user_id: str, search_type: str = "mmr", k: int = 3, fetch_k: int = 10):
+    """Get a retriever for a specific user using existing ChromaDB collection"""
+    
+    def filtered_retriever(query: str):
+        # Use the existing ChromaDB collection for semantic search
+        results = collection.query(
+            query_texts=[query],
+            where={"user_id": user_id},
+            n_results=k
+        )
+        
+        if not results["ids"][0]:
+            return []
+        
+        # Convert ChromaDB results to Document objects
+        from langchain_core.documents import Document
+        docs = []
+        
+        for i, doc_id in enumerate(results["ids"][0]):
+            doc = Document(
+                page_content=results["documents"][0][i],
+                metadata={
+                    "id": doc_id,
+                    "user_id": results["metadatas"][0][i].get("user_id"),
+                    "note_id": results["metadatas"][0][i].get("note_id"),
+                    "tags": results["metadatas"][0][i].get("tags"),
+                    "timestamp": results["metadatas"][0][i].get("timestamp"),
+                    "source": results["metadatas"][0][i].get("source"),
+                    "chunk_index": results["metadatas"][0][i].get("chunk_index"),
+                    "total_chunks": results["metadatas"][0][i].get("total_chunks"),
+                    "relevance_score": results["distances"][0][i] if results["distances"][0] else 0
+                }
+            )
+            docs.append(doc)
+        
+        return docs
+    
+    return filtered_retriever
+
 
 def extract_date_from_question(question: str):
     """Extract date information from natural language questions"""
@@ -202,11 +252,11 @@ class Note(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     user_id: str
-    top_k: int = 5
+    top_k: int = 3
 
 
 
-@app.post("/notes")
+@api_router.post("/notes")
 def create_note(note: Note):
     # Split text into chunks
     chunks = text_splitter.split_text(note.text)
@@ -244,7 +294,7 @@ def create_note(note: Note):
     }
 
 
-@app.get("/notes")
+@api_router.get("/notes")
 def get_notes(user_id: str):
     result = collection.get(where={"user_id": user_id})
     return {
@@ -258,7 +308,7 @@ def get_notes(user_id: str):
         ]
     }
 
-@app.get("/notes/{note_id}")
+@api_router.get("/notes/{note_id}")
 def get_note_by_id(note_id: str, user_id: str):
     result = collection.get(ids=[note_id], where={"user_id": user_id})
     if not result["ids"]:
@@ -270,7 +320,7 @@ def get_note_by_id(note_id: str, user_id: str):
         "metadata": result["metadatas"][0]
     }
 
-@app.put("/notes/{note_id}")
+@api_router.put("/notes/{note_id}")
 def update_note(note_id: str, user_id: str, update_data: dict):
     # Find all chunks for this note
     result = collection.get(where={
@@ -329,7 +379,7 @@ def update_note(note_id: str, user_id: str, update_data: dict):
     
     return {"message": "Note updated successfully", "chunks_updated": len(chunks)}
 
-@app.delete("/notes/{note_id}")
+@api_router.delete("/notes/{note_id}")
 def delete_note(note_id: str, user_id: str):
     # Find all chunks for this note
     result = collection.get(where={
@@ -345,7 +395,93 @@ def delete_note(note_id: str, user_id: str):
     collection.delete(ids=result["ids"])
     return {"message": "Note deleted successfully", "chunks_deleted": len(result["ids"])}
 
-@app.post("/query")
+@api_router.post("/query-retriever")
+def query_notes_with_retriever(query: QueryRequest):
+    """Query notes using LangChain retriever for better relevance"""
+    try:
+        # Get the retriever for this user
+        retriever = get_retriever(query.user_id, k=query.top_k, fetch_k=query.top_k * 3)
+        
+        # Retrieve relevant documents
+        docs = retriever(query.question)
+        
+        if not docs:
+            return {"answer": "No relevant information found in your notes.", "sources": []}
+        
+        # Create context from retrieved documents
+        context_chunks = []
+        sources = []
+        
+        for doc in docs:
+            context_chunks.append(doc.page_content)
+            sources.append({
+                "chunk_id": doc.metadata.get("id", "unknown"),
+                "note_id": doc.metadata.get("note_id", "unknown"),
+                "text_snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
+                "relevance_score": getattr(doc, 'score', 0) if hasattr(doc, 'score') else 0
+            })
+        
+        # Create prompt for AI
+        context = "\n\n".join([f"[Note ID: {sources[i]['note_id']}]\n{chunk}" for i, chunk in enumerate(context_chunks)])
+        
+        prompt = f"""
+        You are a personal assistant that answers questions using ONLY the user's personal notes provided below.
+        Question: {query.question}
+        
+        Your personal notes (with Note IDs for reference):
+        {context}
+        
+        Instructions:
+        1. Answer the question using ONLY the information from your notes above
+        2. If the notes don't contain enough information to answer the question, say "I don't have enough information in my notes to answer this question"
+        3. Be specific about which information comes from the notes. Do not use general knowledge.
+        4. Do not present yourself as an AI assistant.
+        5. If a question requires information outside of the provided notes, respond only with: "I don't have enough information in my notes to answer this question."
+        6. Do NOT mention Note IDs or technical references in your response. Keep the answer natural and user-friendly.
+        7. Focus on the most relevant information from the retrieved notes.
+        8. If multiple notes contain relevant information, synthesize them clearly.
+        
+        Answer:
+        """
+        
+        # Generate AI response
+        llm_instance = get_llm()
+        response = llm_instance.invoke(prompt)
+        answer = response.content
+        
+        return {
+            "answer": answer,
+            "sources": sources,
+            "chunks_found": len(context_chunks)
+        }
+        
+    except Exception as e:
+        return {"error": f"Query failed: {str(e)}"}
+
+# Include the API router in the main app
+app.include_router(api_router)
+
+# Health check endpoint (without /api prefix)
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "message": "Memory Engine is running"}
+
+# Test ChromaDB connection (without /api prefix)
+@app.get("/test-chroma")
+def test_chroma():
+    try:
+        # Get collection info
+        collection_info = collection.get()
+        return {
+            "status": "ok", 
+            "message": "ChromaDB connected successfully",
+            "collection_name": collection.name,
+            "document_count": len(collection_info["ids"])
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"ChromaDB error: {str(e)}"}
+
+@api_router.post("/query")
 def query_notes(query: QueryRequest):
     try:
         from datetime import datetime, timedelta
@@ -616,3 +752,26 @@ def query_notes(query: QueryRequest):
         
     except Exception as e:
         return {"error": f"Query failed: {str(e)}"}
+
+# Include the API router in the main app
+app.include_router(api_router)
+
+# Health check endpoint (without /api prefix)
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "message": "Memory Engine is running"}
+
+# Test ChromaDB connection (without /api prefix)
+@app.get("/test-chroma")
+def test_chroma():
+    try:
+        # Get collection info
+        collection_info = collection.get()
+        return {
+            "status": "ok", 
+            "message": "ChromaDB connected successfully",
+            "collection_name": collection.name,
+            "document_count": len(collection_info["ids"])
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"ChromaDB error: {str(e)}"}
